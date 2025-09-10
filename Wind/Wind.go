@@ -15,51 +15,60 @@ func main() {
 	sensor := machine.ADC{Pin: machine.ADC5}
 	sensor.Configure(machine.ADCConfig{})
 
-	var baseline_sum uint32 = 0
-	machine.Serial.Write([]byte("Calibrating... keep magnet away\n"))
+	var baselineSum uint32 = 0
+	_, err := machine.Serial.Write([]byte("Calibrating... keep magnet away\n"))
+	if err != nil {
+		return
+	}
 	for i := 0; i < 10; i++ {
-		baseline_sum += uint32(sensor.Get())
+		baselineSum += uint32(sensor.Get())
 		time.Sleep(time.Millisecond * 100)
 	}
-	baseline := baseline_sum / 10
+	baseline := baselineSum / 10
 
-	machine.Serial.Write([]byte("Baseline: " + strconv.Itoa(int(baseline)) + " (no magnet)\n"))
+	_, err = machine.Serial.Write([]byte("Baseline: " + strconv.Itoa(int(baseline)) + " (no magnet)\n"))
+	if err != nil {
+		return
+	}
 
 	for {
 		raw := sensor.Get()
-		sensor_value := int(raw)
+		sensorValue := int(raw)
 
 		voltage := (float32(raw) * 5.0) / 65535.0
 
 		diff := int(raw) - int(baseline)
 
-		magnet_status := "No Magnet"
+		magnetStatus := "No Magnet"
 		polarity := ""
 
 		if diff > 100 {
 			polarity = "NORTH POLE"
-			magnet_status = "STRONG " + polarity + " (+" + strconv.Itoa(diff) + ")"
+			magnetStatus = "STRONG " + polarity + " (+" + strconv.Itoa(diff) + ")"
 		} else if diff < -100 {
 			polarity = "SOUTH POLE"
-			magnet_status = "STRONG " + polarity + " (" + strconv.Itoa(diff) + ")"
+			magnetStatus = "STRONG " + polarity + " (" + strconv.Itoa(diff) + ")"
 		} else if diff > 20 {
 			polarity = "north pole"
-			magnet_status = "weak " + polarity + " (+" + strconv.Itoa(diff) + ")"
+			magnetStatus = "weak " + polarity + " (+" + strconv.Itoa(diff) + ")"
 		} else if diff < -20 {
 			polarity = "south pole"
-			magnet_status = "weak " + polarity + " (" + strconv.Itoa(diff) + ")"
+			magnetStatus = "weak " + polarity + " (" + strconv.Itoa(diff) + ")"
 		}
 
-		voltage_int := int(voltage * 1000)
-		voltage_str := strconv.Itoa(voltage_int/1000) + "." +
-			strconv.Itoa((voltage_int%1000)/100) +
-			strconv.Itoa((voltage_int%100)/10) +
-			strconv.Itoa(voltage_int%10)
+		voltageInt := int(voltage * 1000)
+		voltageStr := strconv.Itoa(voltageInt/1000) + "." +
+			strconv.Itoa((voltageInt%1000)/100) +
+			strconv.Itoa((voltageInt%100)/10) +
+			strconv.Itoa(voltageInt%10)
 
-		machine.Serial.Write([]byte("Raw: " + strconv.Itoa(sensor_value) +
-			" | Voltage: " + voltage_str + "V" +
+		_, err := machine.Serial.Write([]byte("Raw: " + strconv.Itoa(sensorValue) +
+			" | Voltage: " + voltageStr + "V" +
 			" | Diff: " + strconv.Itoa(diff) +
-			" | " + magnet_status + "\n"))
+			" | " + magnetStatus + "\n"))
+		if err != nil {
+			return
+		}
 
 		time.Sleep(time.Second)
 	}
