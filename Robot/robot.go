@@ -4,6 +4,8 @@ import (
 	"machine"
 	"strconv"
 	"time"
+
+	"tinygo.org/x/drivers/servo"
 )
 
 // Robot is the Elegoo SmartCar v4 using the Elegoo Smartcar Shield v1.1 and an Arduino Uno R3.
@@ -24,11 +26,11 @@ type Robot struct {
 	// ^ The above are confirmed working
 
 	// HUNCH BUT NEED TO TEST
-	modePin  machine.Pin // mode_pin 2
-	rgbPin   machine.Pin // RGB_pin 4
-	irPin    machine.Pin // IR pin 9
-	servoPin machine.Pin // servo_pin 10
-	led      machine.Pin
+	modePin machine.Pin // mode_pin 2
+	rgbPin  machine.Pin // RGB_pin 4
+	irPin   machine.Pin // IR pin 9
+	servo   servo.Servo
+	led     machine.Pin
 }
 
 func NewRobot() *Robot {
@@ -45,12 +47,10 @@ func NewRobot() *Robot {
 		ultrasonicEcho: machine.D12, // echo
 
 		// Hunches
-		modePin:  machine.D2,  // mode_pin
-		rgbPin:   machine.D4,  // RGB_pin
-		irPin:    machine.D9,  // IR
-		servoPin: machine.D10, // servo_pin
-
-		led: machine.LED,
+		modePin: machine.D2, // mode_pin
+		rgbPin:  machine.D4, // RGB_pin
+		irPin:   machine.D9, // IR
+		led:     machine.LED,
 	}
 }
 
@@ -59,6 +59,13 @@ func (r *Robot) Initialize() {
 		BaudRate: 115200,
 	})
 
+	s, err := servo.New(machine.Timer1, machine.D10)
+	if err != nil {
+		for {
+			machine.Serial.Write([]byte("could not configure servo"))
+			time.Sleep(time.Second)
+		}
+	}
 	r.standby.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	r.leftSpeed.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	r.rightSpeed.Configure(machine.PinConfig{Mode: machine.PinOutput})
@@ -71,7 +78,7 @@ func (r *Robot) Initialize() {
 	r.modePin.Configure(machine.PinConfig{Mode: machine.PinInput})
 	r.rgbPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	r.irPin.Configure(machine.PinConfig{Mode: machine.PinInput})
-	r.servoPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	r.servo = s
 
 	r.led.Configure(machine.PinConfig{Mode: machine.PinOutput})
 
@@ -118,6 +125,15 @@ func (r *Robot) TurnRight() {
 	r.leftSpeed.High()
 	r.rightSpeed.High()
 }
+func (r *Robot) ResetServoPosition() {
+	r.servo.SetMicroseconds(1500)
+}
+func (r *Robot) TurnServoLeft() {
+	r.servo.SetMicroseconds(2000)
+}
+func (r *Robot) TurnServoRight() {
+	r.servo.SetMicroseconds(1000)
+}
 
 // TODO this needs to be reworked. Getting sensor sound inputs but distance is off
 func (r *Robot) GetDistance() float64 {
@@ -149,11 +165,35 @@ func (r *Robot) GetDistance() float64 {
 	// Use the same formula as Arduino: distance = 0.5 * pulse_time * 0.0343
 	// This accounts for sound traveling to object and back (hence 0.5)
 	// 0.0343 is speed of sound in cm/μs
-	distance := float64(pulseTime) * 0.5 * 0.0343
-
+	distance := (float64(pulseTime) * 0.0343) / 2
+	writeDistanceMessage(distance)
 	return distance
 }
 
+func writeDistanceMessage(distance float64) {
+	message := "Test " +
+		": Dist=" + strconv.Itoa(int(distance)) + "cm"
+	machine.Serial.Write([]byte(message + "\n"))
+}
+
+func turnAndGetDistance(robot *Robot) {
+	for {
+
+		robot.TurnServoLeft()
+		robot.GetDistance()
+		time.Sleep(time.Millisecond * 2000)
+		robot.ResetServoPosition()
+		robot.GetDistance()
+		time.Sleep(time.Millisecond * 2000)
+		robot.TurnServoRight()
+		robot.GetDistance()
+		time.Sleep(time.Millisecond * 2000)
+		robot.ResetServoPosition()
+		robot.GetDistance()
+		time.Sleep(time.Millisecond * 2000)
+
+	}
+}
 func main() {
 	robot := NewRobot()
 	robot.Initialize()
@@ -169,16 +209,8 @@ func main() {
 
 	machine.Serial.Write([]byte("Starting main loop...\n"))
 
-	for {
+	turnAndGetDistance(robot)
 
-		distance := robot.GetDistance()
-
-		message := "Test " +
-			": Dist=" + strconv.Itoa(int(distance)) + "cm"
-		machine.Serial.Write([]byte(message + "\n"))
-
-		time.Sleep(500 * time.Millisecond)
-	}
 }
 
 //https://github.com/antonioastro/Elegoo-SmartCar/blob/main/Car_separate_files_v3.ino
