@@ -79,6 +79,7 @@ func (r *Robot) Initialize() {
 	r.rgbPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	r.irPin.Configure(machine.PinConfig{Mode: machine.PinInput})
 	r.servo = s
+	r.ResetServoPosition() // make sure this doesn't break any gears
 
 	r.led.Configure(machine.PinConfig{Mode: machine.PinOutput})
 
