@@ -2,12 +2,13 @@ package main
 
 import (
 	"machine"
+	"strconv"
 	"time"
 )
 
 const (
 	minLux         = 1000
-	maxLux         = 3000
+	maxLux         = 5000
 	windowSize     = 10
 	sampleInterval = 500 * time.Millisecond
 )
@@ -49,11 +50,17 @@ func (rw *RollingWindow) Average() float64 {
 }
 
 func main() {
+	machine.Serial.Configure(machine.UARTConfig{
+		BaudRate: 115200,
+	})
+
 	machine.InitADC()
 	sensor := machine.ADC{Pin: machine.ADC0}
 	sensor.Configure(machine.ADCConfig{})
 
 	rw := NewRollingWindow(windowSize)
+
+	machine.Serial.Write([]byte("Plant sensor started\n"))
 
 	for {
 		raw := sensor.Get()
@@ -61,13 +68,14 @@ func main() {
 		// Convert raw value to Lux.
 		// NOTE: This conversion depends on the specific photoresistor and circuit.
 		// For the KY-018 Photo-resistor Module, it's typically a voltage divider
-		// with a 10k resistor.
+		// with a 10k resistor. According to specs, Signal (S) should be HIGH in light
+		// and LOW in dark when using standard wiring (+ to VCC, - to GND).
 		// Raw values from machine.ADC are 0-65535.
-		// Higher raw values usually mean more light (if 'S' is connected to ADC and '+' to Vcc).
-		// For common LDRs, lux ≈ (constant / resistance)^exponent.
-		// We'll use a slightly more informed linear approximation for demonstration.
-		// 0 Lux (dark) -> 0; ~3000 Lux (bright indirect) -> ~20000; ~10000 Lux (full sun) -> 65535.
-		lux := float64(raw) * 10000.0 / 65535.0
+		// Normalize value (1.0 to 0.0) based on 16-bit ADC (0-65535).
+		// Higher raw values = DARKER.
+		normalized := 1.0 - (float64(raw) / 65535.0)
+		// Lux ≈ normalized^2 * 10000.0 (quadratic approximation fits better for LDRs).
+		lux := normalized * normalized * 10000.0
 
 		rw.Add(lux)
 		avgLux := rw.Average()
@@ -79,10 +87,8 @@ func main() {
 			status = "Too Much"
 		}
 
-		print("Avg Lux: ")
-		print(int(avgLux))
-		print(" - Status: ")
-		println(status)
+		message := "Raw: " + strconv.Itoa(int(raw)) + " - Avg Lux: " + strconv.Itoa(int(avgLux)) + " - Status: " + status + "\n"
+		machine.Serial.Write([]byte(message))
 
 		time.Sleep(sampleInterval)
 	}
