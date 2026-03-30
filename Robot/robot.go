@@ -211,7 +211,6 @@ func main() {
 	machine.Serial.Write([]byte("Starting main loop...\n"))
 
 	turnAndGetDistance(robot)
-
 }
 
 //https://github.com/antonioastro/Elegoo-SmartCar/blob/main/Car_separate_files_v3.ino
