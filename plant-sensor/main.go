@@ -66,10 +66,8 @@ func main() {
 		raw := sensor.Get()
 
 		// Convert raw value to Lux.
-		// NOTE: This conversion depends on the specific photoresistor and circuit.
-		// For the KY-018 Photo-resistor Module, it's typically a voltage divider
-		// with a 10k resistor. According to specs, Signal (S) should be HIGH in light
-		// and LOW in dark when using standard wiring (+ to VCC, - to GND).
+		// KY-018 Photo-resistor Module
+		// with a 10k resistor.
 		// Raw values from machine.ADC are 0-65535.
 		// Normalize value (1.0 to 0.0) based on 16-bit ADC (0-65535).
 		// Higher raw values = DARKER.
