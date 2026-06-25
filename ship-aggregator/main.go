@@ -2,11 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"strings"
@@ -168,38 +168,37 @@ func uploadToHF(token, repoID string, records []TrackingRecord, scrapeTime time.
 	filename := fmt.Sprintf("data/%s.json", scrapeTime.UTC().Format("2006-01-02/150405"))
 	apiURL := fmt.Sprintf("%s/datasets/%s/commit/main", hfAPIBase, repoID)
 
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
-	header := map[string]any{
-		"summary": fmt.Sprintf("Add data %s", scrapeTime.UTC().Format("2006-01-02 15:04:05")),
-		"operations": []map[string]string{
-			{
-				"key":  "file",
-				"path": filename,
+	// HF commit API uses NDJSON format.
+	headerLine, _ := json.Marshal(map[string]any{
+		"key": "header",
+		"value": map[string]any{
+			"summary": fmt.Sprintf("Add data %s", scrapeTime.UTC().Format("2006-01-02 15:04:05")),
+			"operations": []map[string]string{
+				{"key": "file", "path": filename},
 			},
 		},
-	}
-	headerJSON, _ := json.Marshal(header)
-	if err := writer.WriteField("header", string(headerJSON)); err != nil {
-		return fmt.Errorf("writing header field: %w", err)
-	}
+	})
+	fileLine, _ := json.Marshal(map[string]any{
+		"key": "file",
+		"value": map[string]string{
+			"content":  base64.StdEncoding.EncodeToString(data),
+			"encoding": "base64",
+			"path":     filename,
+		},
+	})
 
-	part, err := writer.CreateFormFile("file", filename)
-	if err != nil {
-		return fmt.Errorf("creating form file: %w", err)
-	}
-	if _, err := part.Write(data); err != nil {
-		return fmt.Errorf("writing file data: %w", err)
-	}
-	writer.Close()
+	var body bytes.Buffer
+	body.Write(headerLine)
+	body.WriteByte('\n')
+	body.Write(fileLine)
+	body.WriteByte('\n')
 
 	req, err := http.NewRequest(http.MethodPost, apiURL, &body)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", "application/x-ndjson")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
