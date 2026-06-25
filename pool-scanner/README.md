@@ -26,11 +26,19 @@ sudo apt-get install libgl1-mesa-dev xorg-dev libxxf86vm-dev
 go run .
 ```
 
-### Docker (for consistent build environment)
-If you don't want to install dependencies locally, you can use Docker:
+### Docker (for background monitoring)
+If you want to run the scanner in the background (e.g., on a server), you can use Docker. It will run in **CLI mode** and log pool statistics to the console:
 ```bash
 docker build -t pool-scanner .
+docker run pool-scanner
 ```
+
+### CLI Mode (Manual)
+You can also run the application in CLI mode directly if you don't want the GUI:
+```bash
+go run . --cli
+```
+The application will automatically switch to CLI mode if it detects that no graphical display (X11/Wayland) is available.
 
 ### Android
 To build an APK with the Cardano icon:

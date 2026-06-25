@@ -1,9 +1,12 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"runtime"
 	"time"
 
 	"pool-scanner/scanner"
@@ -16,6 +19,65 @@ import (
 )
 
 func main() {
+	cliFlag := flag.Bool("cli", false, "Run in CLI mode (no GUI)")
+	flag.Parse()
+
+	// Detect if we should run in CLI mode:
+	// 1. Explicit --cli flag
+	// 2. No DISPLAY or WAYLAND_DISPLAY on Linux/Unix
+	shouldRunCLI := *cliFlag
+	if !shouldRunCLI && runtime.GOOS != "android" && runtime.GOOS != "ios" && runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+			shouldRunCLI = true
+		}
+	}
+
+	if shouldRunCLI {
+		runCLI()
+	} else {
+		runGUI()
+	}
+}
+
+func runCLI() {
+	fmt.Println("Cardano Pool Scanner (COSMC) - CLI Mode")
+	fmt.Println("Monitoring pool:", scanner.PoolIDBech32)
+	fmt.Println("Press Ctrl+C to exit")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	var lastKnownCount int64
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	update := func() {
+		data, err := scanner.FetchPoolData(client)
+		if err != nil {
+			log.Printf("Fetch error: %v", err)
+			return
+		}
+
+		if lastKnownCount > 0 && data.TotalBlocks > lastKnownCount {
+			fmt.Printf("\n[NOTIFICATION] New Block Minted! Total: %d\n", data.TotalBlocks)
+		}
+
+		lastKnownCount = data.TotalBlocks
+		since := time.Since(data.LastBlockTime).Round(time.Second)
+
+		fmt.Printf("[%s] Total: %d | Epoch: %d | Last: %s ago\n",
+			time.Now().Format("15:04:05"),
+			data.TotalBlocks,
+			data.EpochBlocks,
+			since)
+	}
+
+	update()
+	for range ticker.C {
+		update()
+	}
+}
+
+func runGUI() {
 	myApp := app.NewWithID("com.pooltool.scanner")
 	myWindow := myApp.NewWindow("Pool Scanner - COSMC")
 

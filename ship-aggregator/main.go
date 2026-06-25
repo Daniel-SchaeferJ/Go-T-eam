@@ -219,11 +219,11 @@ func connectAISStream(apiKey string) (*websocket.Conn, error) {
 		return nil, fmt.Errorf("connecting to aisstream.io: %w", err)
 	}
 
-	// Subscribe to all position reports and static data worldwide.
+	// Subscribe to position reports and static data in San Diego Bay area.
 	subscribeMsg := map[string]any{
 		"APIKey": apiKey,
 		"BoundingBoxes": [][]any{
-			{[]float64{-90, -180}, []float64{90, 180}},
+			{[]float64{32.55, -117.25}, []float64{32.75, -117.05}},
 		},
 		"FilterMessageTypes": []string{"PositionReport", "ShipStaticData"},
 	}

@@ -19,4 +19,4 @@ COPY . .
 # Build the application
 RUN go build -o pool-scanner .
 
-CMD ["./pool-scanner"]
+CMD ["./pool-scanner", "--cli"]
