@@ -20,7 +20,7 @@ import (
 const (
 	aisStreamURL   = "wss://stream.aisstream.io/v0/stream"
 	hfAPIBase      = "https://huggingface.co/api"
-	uploadInterval = 1 * time.Minute
+	uploadInterval = 15 * time.Minute
 )
 
 // AISStreamMessage represents a message received from aisstream.io.
@@ -66,10 +66,10 @@ type ShipStaticData struct {
 	AisVersion           int           `json:"AisVersion"`
 	CallSign             string        `json:"CallSign"`
 	Destination          string        `json:"Destination"`
-	Dimension            ShipDimension `json:"Dimension"`
-	Draught              float64       `json:"Draught"`
-	Dte                  bool          `json:"Dte"`
-	Eta                  EtaData       `json:"Eta"`
+	Dimension            ShipDimension `json:"Dimension,omitzero"`
+	Draught              float64       `json:"Draught,omitzero"`
+	Dte                  bool          `json:"Dte,omitzero"`
+	Eta                  EtaData       `json:"Eta,omitzero"`
 	ImoNumber            int           `json:"ImoNumber"`
 	MaximumStaticDraught float64       `json:"MaximumStaticDraught"`
 	MessageID            int           `json:"MessageID"`
@@ -223,7 +223,7 @@ func connectAISStream(apiKey string) (*websocket.Conn, error) {
 	subscribeMsg := map[string]any{
 		"APIKey": apiKey,
 		"BoundingBoxes": [][]any{
-			{[]float64{32.55, -117.25}, []float64{32.75, -117.05}},
+			{[]float64{32.50, -117.35}, []float64{32.85, -117.00}},
 		},
 		"FilterMessageTypes": []string{"PositionReport", "ShipStaticData"},
 	}
@@ -234,6 +234,16 @@ func connectAISStream(apiKey string) (*websocket.Conn, error) {
 	}
 
 	return conn, nil
+}
+
+func unmarshalMessage(data []byte, key string, v any) error {
+	var wrapper map[string]json.RawMessage
+	if err := json.Unmarshal(data, &wrapper); err == nil {
+		if inner, ok := wrapper[key]; ok {
+			return json.Unmarshal(inner, v)
+		}
+	}
+	return json.Unmarshal(data, v)
 }
 
 func run() error {
@@ -250,8 +260,8 @@ func run() error {
 	}
 
 	var (
-		mu      sync.Mutex
-		records []TrackingRecord
+		mu        sync.Mutex
+		shipState = make(map[int]*TrackingRecord)
 	)
 
 	// Upload buffered records periodically.
@@ -260,12 +270,15 @@ func run() error {
 		defer ticker.Stop()
 		for range ticker.C {
 			mu.Lock()
-			if len(records) == 0 {
+			if len(shipState) == 0 {
 				mu.Unlock()
 				continue
 			}
-			batch := records
-			records = nil
+			batch := make([]TrackingRecord, 0, len(shipState))
+			for _, rec := range shipState {
+				batch = append(batch, *rec)
+			}
+			shipState = make(map[int]*TrackingRecord)
 			mu.Unlock()
 
 			now := time.Now()
@@ -274,7 +287,17 @@ func run() error {
 				log.Printf("Error uploading to Hugging Face: %v", err)
 				// Put records back so they aren't lost.
 				mu.Lock()
-				records = append(batch, records...)
+				for _, rec := range batch {
+					existing, ok := shipState[rec.MMSI]
+					if !ok {
+						r := rec
+						shipState[rec.MMSI] = &r
+					} else {
+						// Merge if we want to preserve newer data already in shipState
+						// But for simplicity, we just won't overwrite newer data
+						_ = existing
+					}
+				}
 				mu.Unlock()
 			} else {
 				log.Printf("Uploaded %d records to HF dataset %s", len(batch), hfRepo)
@@ -306,29 +329,30 @@ func run() error {
 			switch msg.MessageType {
 			case "PositionReport":
 				var pos PositionReport
-				if err := json.Unmarshal(msg.Message, &pos); err != nil {
+				if err := unmarshalMessage(msg.Message, "PositionReport", &pos); err != nil {
 					log.Printf("Error parsing position report: %v", err)
 					continue
 				}
-				rec := TrackingRecord{
-					ReceiveTime: now,
-					MMSI:        msg.MetaData.MMSI,
-					Name:        msg.MetaData.ShipName,
-					Heading:     pos.TrueHeading,
-					Course:      pos.Cog,
-					Speed:       pos.Sog,
-					Longitude:   msg.MetaData.Longitude,
-					Latitude:    msg.MetaData.Latitude,
-					NavStatus:   pos.NavigationalStatus,
-					AISTime:     msg.MetaData.TimeUtc,
-				}
 				mu.Lock()
-				records = append(records, rec)
+				rec, ok := shipState[msg.MetaData.MMSI]
+				if !ok {
+					rec = &TrackingRecord{MMSI: msg.MetaData.MMSI}
+					shipState[msg.MetaData.MMSI] = rec
+				}
+				rec.ReceiveTime = now
+				rec.Name = msg.MetaData.ShipName
+				rec.Heading = pos.TrueHeading
+				rec.Course = pos.Cog
+				rec.Speed = pos.Sog
+				rec.Longitude = msg.MetaData.Longitude
+				rec.Latitude = msg.MetaData.Latitude
+				rec.NavStatus = pos.NavigationalStatus
+				rec.AISTime = msg.MetaData.TimeUtc
 				mu.Unlock()
 
 			case "ShipStaticData":
 				var sd ShipStaticData
-				if err := json.Unmarshal(msg.Message, &sd); err != nil {
+				if err := unmarshalMessage(msg.Message, "ShipStaticData", &sd); err != nil {
 					log.Printf("Error parsing static data: %v", err)
 					continue
 				}
@@ -336,22 +360,23 @@ func run() error {
 				if sd.Eta.Month > 0 {
 					eta = fmt.Sprintf("%02d-%02dT%02d:%02d", sd.Eta.Month, sd.Eta.Day, sd.Eta.Hour, sd.Eta.Minute)
 				}
-				rec := TrackingRecord{
-					ReceiveTime: now,
-					MMSI:        msg.MetaData.MMSI,
-					IMO:         sd.ImoNumber,
-					Name:        sd.Name,
-					CallSign:    sd.CallSign,
-					ShipType:    sd.Type,
-					Longitude:   msg.MetaData.Longitude,
-					Latitude:    msg.MetaData.Latitude,
-					AISTime:     msg.MetaData.TimeUtc,
-					Draught:     sd.MaximumStaticDraught,
-					Dest:        sd.Destination,
-					ETA:         eta,
-				}
 				mu.Lock()
-				records = append(records, rec)
+				rec, ok := shipState[msg.MetaData.MMSI]
+				if !ok {
+					rec = &TrackingRecord{MMSI: msg.MetaData.MMSI}
+					shipState[msg.MetaData.MMSI] = rec
+				}
+				rec.ReceiveTime = now
+				rec.IMO = sd.ImoNumber
+				rec.Name = sd.Name
+				rec.CallSign = sd.CallSign
+				rec.ShipType = sd.Type
+				rec.Longitude = msg.MetaData.Longitude
+				rec.Latitude = msg.MetaData.Latitude
+				rec.AISTime = msg.MetaData.TimeUtc
+				rec.Draught = sd.MaximumStaticDraught
+				rec.Dest = sd.Destination
+				rec.ETA = eta
 				mu.Unlock()
 			}
 		}
